@@ -1,4 +1,6 @@
 import { files, type File, type InsertFile } from "@shared/schema";
+import { db } from "./db";
+import { eq, desc } from "drizzle-orm";
 
 export interface IStorage {
   getFile(id: number): Promise<File | undefined>;
@@ -9,69 +11,48 @@ export interface IStorage {
   deleteFile(id: number): Promise<boolean>;
 }
 
-export class MemStorage implements IStorage {
-  private files: Map<number, File>;
-  private md5Index: Map<string, number>;
-  private currentId: number;
-
-  constructor() {
-    this.files = new Map();
-    this.md5Index = new Map();
-    this.currentId = 1;
-  }
-
+export class DatabaseStorage implements IStorage {
   async getFile(id: number): Promise<File | undefined> {
-    return this.files.get(id);
+    const results = await db.select().from(files).where(eq(files.id, id));
+    return results.length > 0 ? results[0] : undefined;
   }
 
   async getFileByMd5Hash(md5Hash: string): Promise<File | undefined> {
-    const id = this.md5Index.get(md5Hash);
-    if (id) {
-      return this.files.get(id);
-    }
-    return undefined;
+    const results = await db.select().from(files).where(eq(files.md5Hash, md5Hash));
+    return results.length > 0 ? results[0] : undefined;
   }
 
   async getFiles(): Promise<File[]> {
-    return Array.from(this.files.values()).sort((a, b) => {
-      // Sort by uploadedAt desc
-      return new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime();
-    });
+    // Sort by uploadedAt desc
+    return db.select().from(files).orderBy(desc(files.uploadedAt));
   }
 
   async createFile(insertFile: InsertFile): Promise<File> {
-    const id = this.currentId++;
-    const now = new Date();
-    const file: File = {
+    // Ensure originalUrl is null if undefined (PostgreSQL doesn't accept undefined)
+    const fileWithNullUrl = {
       ...insertFile,
-      id,
-      downloads: 0,
-      uploadedAt: now,
+      originalUrl: insertFile.originalUrl || null
     };
     
-    this.files.set(id, file);
-    this.md5Index.set(file.md5Hash, id);
-    
-    return file;
+    const result = await db.insert(files).values(fileWithNullUrl).returning();
+    return result[0];
   }
 
   async incrementDownloadCount(id: number): Promise<void> {
-    const file = this.files.get(id);
+    const file = await this.getFile(id);
     if (file) {
-      file.downloads += 1;
-      this.files.set(id, file);
+      await db
+        .update(files)
+        .set({ downloads: file.downloads + 1 })
+        .where(eq(files.id, id));
     }
   }
 
   async deleteFile(id: number): Promise<boolean> {
-    const file = this.files.get(id);
-    if (file) {
-      this.md5Index.delete(file.md5Hash);
-      this.files.delete(id);
-      return true;
-    }
-    return false;
+    const result = await db.delete(files).where(eq(files.id, id)).returning();
+    return result.length > 0;
   }
 }
 
-export const storage = new MemStorage();
+// Initialize the database storage
+export const storage = new DatabaseStorage();
