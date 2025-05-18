@@ -96,22 +96,25 @@ export class TelegramClient {
   // Helper method to upload files to Telegram using curl
   private async uploadFileWithCurl(filePath: string, caption: string, filename: string, mimeType: string): Promise<any> {
     return new Promise((resolve, reject) => {
-      const { exec } = require('child_process');
-      
-      const curlCommand = `curl -F "chat_id=${this.channelId}" -F "document=@${filePath}" -F "caption=${caption}" ${this.apiUrl}/sendDocument`;
-      
-      exec(curlCommand, (error: any, stdout: string, stderr: string) => {
-        if (error) {
-          console.error(`Curl exec error: ${error}`);
-          return reject(error);
-        }
+      // Import child_process in ESM format
+      import('child_process').then(({ exec }) => {
+        const curlCommand = `curl -F "chat_id=${this.channelId}" -F "document=@${filePath}" -F "caption=${caption}" ${this.apiUrl}/sendDocument`;
         
-        try {
-          const result = JSON.parse(stdout);
-          resolve(result);
-        } catch (e) {
-          reject(new Error(`Failed to parse Telegram API response: ${stdout}`));
-        }
+        exec(curlCommand, (error: any, stdout: string, stderr: string) => {
+          if (error) {
+            console.error(`Curl exec error: ${error}`);
+            return reject(error);
+          }
+          
+          try {
+            const result = JSON.parse(stdout);
+            resolve(result);
+          } catch (e) {
+            reject(new Error(`Failed to parse Telegram API response: ${stdout}`));
+          }
+        });
+      }).catch(err => {
+        reject(new Error(`Failed to import child_process: ${err.message}`));
       });
     });
   }
