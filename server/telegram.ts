@@ -6,6 +6,10 @@ import { unlink } from "fs/promises";
 import { createHash } from "crypto";
 import * as path from "path";
 import * as os from "os";
+import * as fs from "fs";
+import { FormData, File as FormFile } from "formdata-node";
+import { FormDataEncoder } from "form-data-encoder";
+import { Readable } from "stream";
 
 // Telegram API limits
 const MAX_FILE_SIZE = 2000 * 1024 * 1024; // 2GB
@@ -89,6 +93,29 @@ export class TelegramClient {
     });
   }
 
+  // Helper method to upload files to Telegram using curl
+  private async uploadFileWithCurl(filePath: string, caption: string, filename: string, mimeType: string): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const { exec } = require('child_process');
+      
+      const curlCommand = `curl -F "chat_id=${this.channelId}" -F "document=@${filePath}" -F "caption=${caption}" ${this.apiUrl}/sendDocument`;
+      
+      exec(curlCommand, (error: any, stdout: string, stderr: string) => {
+        if (error) {
+          console.error(`Curl exec error: ${error}`);
+          return reject(error);
+        }
+        
+        try {
+          const result = JSON.parse(stdout);
+          resolve(result);
+        } catch (e) {
+          reject(new Error(`Failed to parse Telegram API response: ${stdout}`));
+        }
+      });
+    });
+  }
+
   async uploadFromUrl(url: string): Promise<TelegramFileInfo> {
     try {
       // Get file info from URL
@@ -141,22 +168,9 @@ export class TelegramClient {
       // Calculate MD5 hash
       const md5Hash = await this.calculateMd5Hash(tempFilePath);
       
-      // Upload to Telegram
-      const formData = new FormData();
-      formData.append("chat_id", this.channelId);
-      formData.append("caption", `File: ${filename}\nMD5: ${md5Hash}`);
-      
-      // Create file object for FormData
-      const fileBuffer = await fetch(`file://${tempFilePath}`).then(res => res.arrayBuffer());
-      const file = new Blob([fileBuffer], { type: contentType });
-      formData.append("document", file, filename);
-      
-      const uploadResponse = await fetch(`${this.apiUrl}/sendDocument`, {
-        method: "POST",
-        body: formData,
-      });
-      
-      const uploadResult = await uploadResponse.json() as any;
+      // Upload to Telegram using curl
+      const caption = `File: ${filename}\nMD5: ${md5Hash}`;
+      const uploadResult = await this.uploadFileWithCurl(tempFilePath, caption, filename, contentType);
       
       if (!uploadResult.ok) {
         throw new Error(`Failed to upload to Telegram: ${uploadResult.description}`);
@@ -175,6 +189,7 @@ export class TelegramClient {
         md5Hash,
       };
     } catch (error) {
+      console.error("Error in uploadFromUrl:", error);
       throw new Error(`Error uploading file from URL: ${(error as Error).message}`);
     }
   }
@@ -188,22 +203,9 @@ export class TelegramClient {
       // Calculate MD5 hash
       const md5Hash = await this.calculateMd5Hash(file.path);
       
-      // Upload to Telegram
-      const formData = new FormData();
-      formData.append("chat_id", this.channelId);
-      formData.append("caption", `File: ${file.originalname}\nMD5: ${md5Hash}`);
-      
-      // Create file object for FormData
-      const fileBuffer = await fetch(`file://${file.path}`).then(res => res.arrayBuffer());
-      const fileBlob = new Blob([fileBuffer], { type: file.mimetype });
-      formData.append("document", fileBlob, file.originalname);
-      
-      const uploadResponse = await fetch(`${this.apiUrl}/sendDocument`, {
-        method: "POST",
-        body: formData,
-      });
-      
-      const uploadResult = await uploadResponse.json() as any;
+      // Upload to Telegram using curl
+      const caption = `File: ${file.originalname}\nMD5: ${md5Hash}`;
+      const uploadResult = await this.uploadFileWithCurl(file.path, caption, file.originalname, file.mimetype);
       
       if (!uploadResult.ok) {
         throw new Error(`Failed to upload to Telegram: ${uploadResult.description}`);
@@ -219,6 +221,7 @@ export class TelegramClient {
         md5Hash,
       };
     } catch (error) {
+      console.error("Error in uploadFile:", error);
       throw new Error(`Error uploading file: ${(error as Error).message}`);
     }
   }
